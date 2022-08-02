@@ -29,6 +29,7 @@ from pip._internal import main as pipmain
 # !pip install colored -q
 # !pip install -U -q PyDrive -q
 
+
 # Import Packages
 # import pandas as pd
 # import numpy as np
@@ -48,6 +49,8 @@ from nltk import ngrams
 import re
 import string
 
+
+
 # from sklearn.model_selection import train_test_split
 # from sklearn.metrics import classification_report, multilabel_confusion_matrix
 # import seaborn as sns
@@ -62,6 +65,7 @@ import string
 # sns.set_palette(sns.color_palette(HAPPY_COLORS_PALETTE))
 # rcParams['figure.figsize'] = 12, 8
 # pl.seed_everything(RANDOM_SEED)
+
 
 class TweetTagger(pl.LightningModule):
   def __init__(self, n_classes: int, n_training_steps=None, n_warmup_steps=None):
@@ -110,9 +114,15 @@ class TweetTagger(pl.LightningModule):
         predictions.append(out_predictions)
     labels = torch.stack(labels).int()
     predictions = torch.stack(predictions)
-    for i, name in enumerate(6):
-      class_roc_auc = auroc(predictions[:, i], labels[:, i])
-      self.logger.experiment.add_scalar(f"{name}_roc_auc/Train", class_roc_auc, self.current_epoch)
+    #CHANGING THIS 
+    # for i, name in enumerate(6):
+    #   class_roc_auc = auroc(predictions[:, i], labels[:, i])
+    #   self.logger.experiment.add_scalar(f"{name}_roc_auc/Train", class_roc_auc, self.current_epoch)
+    LABEL_COLUMNS = ['neutral', 'general criticsm', 'disability shaming', 'racial prejudice',
+                     'sexism','lgbtq+ phobia']
+    for i, name in enumerate(LABEL_COLUMNS):
+       class_roc_auc = auroc(predictions[:, i], labels[:, i])
+       self.logger.experiment.add_scalar(f"{name}_roc_auc/Train", class_roc_auc, self.current_epoch)
   def configure_optimizers(self):
     optimizer = AdamW(self.parameters(), lr=2e-5)
     scheduler = get_linear_schedule_with_warmup(
@@ -127,7 +137,78 @@ class TweetTagger(pl.LightningModule):
         interval='step'
       )
     )
+def color_words(text,tokenizer):
+  # define sentiment lists for each color 
+  neutral_words = []
+  general_criticism_words = []
+  disability_shaming_words = []
+  racist_words = []
+  sexist_words = []
+  lgbtq_words = []
 
+  loaded_model = TweetTagger(n_classes=6, n_warmup_steps=140, n_training_steps=703)
+  # BERT_MODEL_NAME = 'bert-base-cased'
+  # tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_NAME)
+
+    # remove punctutation 
+    # tweet = re.findall(r"[\w']+|[.,!?;]", tweet)
+  tweet = re.sub(r'[^\w\s]', '', text)
+    # dictionary storing the count of each sentiment detected from BERT (increment by )0.5 because we use bigrams  
+  count_dict = {'neutral_count': 0, 'general_criticism_count': 0, 'disability_count': 0, 'racist_count': 0, 'sexist_count': 0, 'lgbtq_count': 0}
+    # first and last unigrams 
+  unigrams = generate_N_grams(tweet, 1) 
+  for unigram in unigrams:
+    encoding = tokenizer.encode_plus(
+    unigram,
+    add_special_tokens=True,
+    max_length=512,
+    return_token_type_ids=False,
+    padding="max_length",
+    return_attention_mask=True,
+    return_tensors='pt',
+    )
+    _, test_prediction = loaded_model(encoding["input_ids"], encoding["attention_mask"])
+    test_prediction = test_prediction.flatten().detach().numpy()
+    # print(f'unigram: {unigram}, test_prediction: {test_prediction}')
+    if test_prediction[0] > 0.5:
+      count_dict['neutral_count'] += 1
+      neutral_words.append(unigram)
+    elif test_prediction[1] > 0.5:
+      count_dict['general_criticism_count'] += 1
+      general_criticism_words.append(unigram)
+    elif test_prediction [2] > 0.5:
+      count_dict['disability_count'] += 1
+      disability_shaming_words.append(unigram)
+    elif test_prediction[3] > 0.5:
+      count_dict['racist_count'] += 1
+      racist_words.append(unigram)
+    elif test_prediction[4] > 0.5:
+      count_dict['sexist_count'] += 1
+      sexist_words.append(unigram)
+    elif test_prediction[5] > 0.5:
+      count_dict['lgbtq_count'] += 1
+      lgbtq_words.append(unigram)
+
+  # puncs = ['!','(',')',',','-','[',']','{','}',';',':','’', '”', '<' , '>','.','/','?','@','#','$','%','^','&','*','_','~']
+  tweet = re.findall(r"[\w']+|[.,!?;]", text)
+
+  response = ' '
+  ans = str('<p style="color:Black;">Words Highlight:</p>')+ '  '
+  for word in tweet:
+    if word in lgbtq_words:
+      ans += str(f'<h6 style="color:Green;">{word}</h6>') + ' '
+    elif word in racist_words:
+      ans += str(f'<h6 style="color:Blue;">{word}</h6>') + ' '
+    elif word in disability_shaming_words:
+      ans += str(f'<h6 style="color:Red;">{word}</h6>') + ' '
+    elif word in sexist_words:
+      ans += str(f'<h6 style="color:Yellow;">{word}</h6>') + ' '
+    elif word in general_criticism_words:
+      ans += str(f'<h6 style="color:Orange;">{word}</h6>') + ' '
+    else:
+      #st.write(word, end=' ')
+      ans += str(f'<h6 style="color:Black;">{word}</h6>') + ' '
+  return ans
 # def get_model_predictions(tweet):
 #     model = TweetTagger(n_classes=6, n_warmup_steps=140, n_training_steps=703)
 #     loaded_model = TweetTagger(n_classes=6,
@@ -165,7 +246,7 @@ def generate_N_grams(text,ngram=1):
     ans=[' '.join(ngram) for ngram in temp]
     return ans
 
-def count_category(tweet, loaded_model):
+def count_category(tweet, loaded_model,tokenizer):
     #model = TweetTagger(n_classes=6, n_warmup_steps=140, n_training_steps=703)
     #loaded_model = TweetTagger(n_classes=6, n_warmup_steps=140, n_training_steps=703)
     # define sentiment lists for each color
@@ -183,8 +264,8 @@ def count_category(tweet, loaded_model):
     # first and last unigrams
     unigrams = generate_N_grams(tweet, 1)
 
-    BERT_MODEL_NAME = 'bert-base-cased'
-    tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_NAME)
+    # BERT_MODEL_NAME = 'bert-base-cased'
+    # tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_NAME)
 
 
     for unigram in unigrams:
@@ -221,7 +302,7 @@ def count_category(tweet, loaded_model):
     return count_dict
 
 
-def return_distribution(test_comment):
+def return_distribution(test_comment, tokenizer):
 
     model = TweetTagger(n_classes=6, n_warmup_steps=140, n_training_steps=703)
     loaded_model = TweetTagger(n_classes=6, n_warmup_steps=140, n_training_steps=703)
@@ -229,8 +310,8 @@ def return_distribution(test_comment):
     loaded_model.load_state_dict(torch.load('pytorch_model.pth'))
     loaded_model.eval()
 
-    BERT_MODEL_NAME = 'bert-base-cased'
-    tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_NAME)
+    # BERT_MODEL_NAME = 'bert-base-cased'
+    # tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_NAME)
 
     encoding = tokenizer.encode_plus(
     test_comment,
@@ -246,7 +327,7 @@ def return_distribution(test_comment):
 
     # multiply the original outputs by the term frequency (TF) of each category
 
-    count_dict = count_category(test_comment, loaded_model)
+    count_dict = count_category(test_comment, loaded_model,tokenizer)
 
 
     neutral_score = count_dict['neutral_count']*test_prediction[0]
@@ -274,68 +355,123 @@ def return_distribution(test_comment):
 
 
 header = st.container()
+java = st.container()
+box = st.container()
 mission = st.container()
 dataset = st.container()
 models = st.container()
 #ale changed this line
-java = st.container()
 resource = st.container()
 
+#DEFINE TOKENIZER
+BERT_MODEL_NAME = 'bert-base-cased'
+tokenizer = BertTokenizer.from_pretrained(BERT_MODEL_NAME)
+
 with header:
-    #Insert  Title
-    st.title("Welcome to our Capstone Project!")
+    #Insert Tone logo
     image = Image.open('tone_log.png')
-    st.image(image, caption = "Toning down the bad vibes")
+    st.image(image,width=700,caption= "Toning Down Bad Vibes")
+    #st.markdown("<h3 style='text-align: center; color: black;'>Toning Down Bad Vibes</h3>", unsafe_allow_html=True)
+
 
 with mission:
     st.title("Mission Statement:")
-    st.text("Promoting empathy among Twitter Users to reduce offensive content that harms the wellness of users")
+    st.markdown("*Promoting empathy among Twitter Users to reduce offensive content that harms the wellness of users*")
+
+# with box:
+  #st.subheader("Analyze your tweet!")
+  # sentence = st.text_input('Input your tweet below:')
+  # color_sentence = color_words(sentence,tokenizer)
+  # if sentence:
+  #     answer = return_distribution(sentence,tokenizer)
+  #     #st.write(answer)
+  # else:
+  #     answer = [['Neutral', 1.0], ['General Criticism', 0],
+  #     ['Disability Shaming', 0], ['Sexism', 0],
+  #     ['Racial Prejudice', 0], ['LGBTQ+ Phobia', 0]
+  #     ]
+  # answer.insert(0, ['Task', 'Hours per Day'])
+
 
 with dataset:
-    sentence = st.text_input('Input your sentence here:')
-    if sentence:
-        answer = return_distribution(sentence)
-        #st.write(answer)
-    else:
-        answer = [['Neutral', 1.0], ['General Criticism', 0],
-        ['Disability Shaming', 0], ['Sexism', 0],
-        ['Racial Prejudice', 0], ['LGBTQ+ Phobia', 0]
-        ]
-    st.text("""
-    The data is composed of about 24,000 tweets derived from the Kaggle Hate
+    # sentence = st.text_input('Input your sentence here:')
+    # color_sentence = color_words(sentence)
+    # if sentence:
+    #     answer = return_distribution(sentence)
+    #     #st.write(answer)
+    # else:
+    #     answer = [['Neutral', 1.0], ['General Criticism', 0],
+    #     ['Disability Shaming', 0], ['Sexism', 0],
+    #     ['Racial Prejudice', 0], ['LGBTQ+ Phobia', 0]
+    #     ]
+    st.subheader("About the data")
+    st.markdown("""The data is composed of about 24,000 tweets derived from the Kaggle Hate
     Speech and Offensive Language Dataset.The original dataset was conceived
     to be used to research hate speech such as racial, homophobic, sexist,
     and general offensive language. It had the following columns that we
     later modify: hate_speech, offensive_language, and neither.
     Since we wanted to help users reflect deeper about the type of
     offensive language they may be putting out into the world, we decided
-    to alter the dataset in the following ways:
-	1.	We began by creating the following columns: 'Neutral',
+    to alter the dataset in the following ways:  
+    __1.__ We began by creating the following columns: 'Neutral',
     'General Criticism', 'Disability Shaming', 'Sexism','Racial Prejudice',
-    and 'LGBTQ+ Phobic'.
-	2.	Since these new labels were not present in the original dataset,
-    we needed to relabel using our new columns.
-	3.	Language is fundamentally complex and context is important to discern
+    and 'LGBTQ+ Phobic'.  
+    __2.__ Since these new labels were not present in the original dataset,
+    we needed to relabel using our new columns.  
+    __3.__ Language is fundamentally complex and context is important to discern
     more subtle offensive sentences and phrases. We wanted to be mindful,
     accurate, and consistant with our relabeling process. To do this we created
     a labeling methodology [link here] that each one of our members followed
-    while manually reading and relabeling thousands of tweets.
-	4.	We then fed our newly relabeled into our PyTorch model where we train
+    while manually reading and relabeling thousands of tweets.  
+    __4.__ We then fed our newly relabeled into our PyTorch model where we train
     the machine learning algorithm to recognize hate speech and predict the
-    type of offensive language.
+    type of offensive language.  
+    Here's a preview of our dataset using real tweets: """, unsafe_allow_html=True)
+    # st.text("""
+    # The data is composed of about 24,000 tweets derived from the Kaggle Hate
+    # Speech and Offensive Language Dataset.The original dataset was conceived
+    # to be used to research hate speech such as racial, homophobic, sexist,
+    # and general offensive language. It had the following columns that we
+    # later modify: hate_speech, offensive_language, and neither.
+    # Since we wanted to help users reflect deeper about the type of
+    # offensive language they may be putting out into the world, we decided
+    # to alter the dataset in the following ways:
+    # 1. We began by creating the following columns: 'Neutral',
+    # 'General Criticism', 'Disability Shaming', 'Sexism','Racial Prejudice',
+    # and 'LGBTQ+ Phobic'.
+    # 2. Since these new labels were not present in the original dataset,
+    # we needed to relabel using our new columns.
+    # 3. Language is fundamentally complex and context is important to discern
+    # more subtle offensive sentences and phrases. We wanted to be mindful,
+    # accurate, and consistant with our relabeling process. To do this we created
+    # a labeling methodology [link here] that each one of our members followed
+    # while manually reading and relabeling thousands of tweets.
+    # 4. We then fed our newly relabeled into our PyTorch model where we train
+    # the machine learning algorithm to recognize hate speech and predict the
+    # type of offensive language.
 
-    Here's a preview of our dataset using real tweets:""")
+    # Here's a preview of our dataset using real tweets:""")
     data = pd.read_csv("multi_label_new.csv", encoding = "ISO-8859-1")
-    answer.insert(0, ['Task', 'Hours per Day'])
+    # answer.insert(0, ['Task', 'Hours per Day'])
+    st.write(data.tail(50))
 
-
-    st.write(data.tail(10))
-    # pred = model.get_model_predictions("I hate james a lot")
-    # st.text(pred)
 
 #Writes the html/css/javascript: Mostly for the donut chart
 #ale changed this too
 with java:
+    # st.write(color_sentence)
+    # st.markdown(color_sentence, unsafe_allow_html=True)
+    sentence = st.text_input('Input your tweet below:', key=111)
+    color_sentence = color_words(sentence,tokenizer)
+    if sentence:
+        answer = return_distribution(sentence,tokenizer)
+        #st.write(answer)
+    else:
+        answer = [['Neutral', 1.0], ['General Criticism', 0],
+        ['Disability Shaming', 0], ['Sexism', 0],
+        ['Racial Prejudice', 0], ['LGBTQ+ Phobia', 0]
+        ]
+    answer.insert(0, ['Task', 'Hours per Day'])
     components.html(
         """
         <section>
@@ -348,7 +484,7 @@ with java:
               var data = google.visualization.arrayToDataTable(""" + str(answer) + """);
               var options = {
                 title: 'Tone Representation',
-                pieHole: 0.4,
+                pieHole: 0.55,
                 colors: ['#36d8ff', '#529ffc', '#31356e', '#66757f', '#5F9EA0', '#96DED1']
               };
               var chart = new google.visualization.PieChart(document.getElementById('donutchart'));
@@ -359,7 +495,7 @@ with java:
         </div>
         </section>
         """,
-        height=600,
+        height=350,
     )
 
 # Resources page #
@@ -372,22 +508,22 @@ with resource:
     resources we provided as a stepping stone to learn more about LGBTQ+
     community, gender equity, Disability awareness, and racial equality.""")
 
-    st.write("Sexism:")
-    st.write("Britannica - Sexism Definition:[link](https://www.britannica.com/topic/sexism)")
-    st.write("European Institute for Gender Equality - What is Sexism: [link] (https://eige.europa.eu/publications/sexism-at-work-handbook/part-1-understand/what-sexism)")
-    st.write("Human Rights Channel - Sexism: See it. Name it. Stop it: [link] (https://human-rights-channel.coe.int/stop-sexism-en.html)")
-    st.write("Science Direct - Sexism: [link] (https://www.sciencedirect.com/topics/psychology/sexism)")
+    st.subheader("Sexism:")
+    st.write("[Britannica - Sexism Definition:](https://www.britannica.com/topic/sexism)")
+    st.write("[European Institute for Gender Equality - What is Sexism:](https://eige.europa.eu/publications/sexism-at-work-handbook/part-1-understand/what-sexism)")
+    st.write("[Human Rights Channel - Sexism: See it. Name it. Stop it:](https://human-rights-channel.coe.int/stop-sexism-en.html)")
+    st.write("[Science Direct - Sexism:](https://www.sciencedirect.com/topics/psychology/sexism)")
 
-    st.write("Racial Prejudice:")
-    st.write("United Nations Declaration on Race and Racial Prejudice: [link] (https://www.ohchr.org/en/instruments-mechanisms/instruments/declaration-race-and-racial-prejudice")
-    st.write("U.S. Equal Employment Opportunity Commission Race/Color Discrimination: [link] (https://www.eeoc.gov/racecolor-discrimination)")
-    st.write("Alberta Civil Liberties Research Centre - Racism: [link] (https://www.aclrc.com/racism)")
-    st.write("The National Association of School Psychologists (NASP) - Prejudice, Discrimination, and Racism: [link] (https://www.nasponline.org/x26830.xml)")
-    st.write("University of Minnesota - Prejudice – Sociology - Publishing Services:[link] (https://open.lib.umn.edu/sociology/chapter/10-3-prejudice/)")
+    st.subheader("Racial Prejudice:")
+    st.write("[United Nations Declaration on Race and Racial Prejudice:](https://www.ohchr.org/en/instruments-mechanisms/instruments/declaration-race-and-racial-prejudice)")
+    st.write("[U.S. Equal Employment Opportunity Commission Race/Color Discrimination:](https://www.eeoc.gov/racecolor-discrimination)")
+    st.write("[Alberta Civil Liberties Research Centre - Racism:](https://www.aclrc.com/racism)")
+    st.write("[The National Association of School Psychologists (NASP) - Prejudice, Discrimination, and Racism:](https://www.nasponline.org/x26830.xml)")
+    st.write("[University of Minnesota - Prejudice – Sociology - Publishing Services:](https://open.lib.umn.edu/sociology/chapter/10-3-prejudice/)")
 
-    st.write("Disability")
-    st.write("The Lakeshore West Michigan’s How to respect people with disabilities: [link] (https://www.secondwavemedia.com/lakeshore/features/Persons_First_Language_respects_people_with_disabilities.aspx)")
-    st.write("Etiquette: Interacting with People with Disabilities: [link] (https://www.respectability.org/inclusion-toolkits/etiquette-interacting-with-people-with-disabilities/)")
-    st.write("Illinois Department of Human Services - A Guide to Interacting with People with Disabilities: [link] (https://www.dhs.state.il.us/page.aspx?item=32276)")
-    st.write("New York State Department of Health: Disability Etiquette Treat: Everyone with Respect: [link] (https://www.health.ny.gov/publications/0951.pdf)")
-    st.write("Capital Women’s Care’s Showing Acceptance and Respect for Those with Disabilities: [link] (https://www.cwcare.net/news/showing-acceptance-and-respect-those-disabilities)")
+    st.subheader("Disability")
+    st.write("[The Lakeshore West Michigan’s How to respect people with disabilities:](https://www.secondwavemedia.com/lakeshore/features/Persons_First_Language_respects_people_with_disabilities.aspx)")
+    st.write("[Etiquette: Interacting with People with Disabilities:](https://www.respectability.org/inclusion-toolkits/etiquette-interacting-with-people-with-disabilities/)")
+    st.write("[Illinois Department of Human Services - A Guide to Interacting with People with Disabilities:](https://www.dhs.state.il.us/page.aspx?item=32276)")
+    st.write("[New York State Department of Health: Disability Etiquette Treat: Everyone with Respect:](https://www.health.ny.gov/publications/0951.pdf)")
+    st.write("[Capital Women’s Care’s Showing Acceptance and Respect for Those with Disabilities:](https://www.cwcare.net/news/showing-acceptance-and-respect-those-disabilities)")
